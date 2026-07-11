@@ -16,6 +16,8 @@ export interface Reasoning {
   localPerspective: string;
   tradeoffs: string[];
   logistics: string;
+  comparisonSet?: string[];
+  clarifyingQuestions?: string[];
 }
 
 export interface BudgetBreakdown {
@@ -57,6 +59,7 @@ export interface ActivityRecommendation {
   estimatedCost: number;
   crowdLevel: "low" | "medium" | "high";
   whyItFits: string;
+  availability?: string;
 }
 
 export interface AlternativeDestination {
@@ -71,6 +74,20 @@ export interface ToolInsights {
   hotels: string;
   activities: string;
   weather: string;
+  transportation: string;
+}
+
+export interface WeatherSummary {
+  outlook: string;
+  averageHighC: number;
+  averageLowC: number;
+  precipitationRisk: string;
+}
+
+export interface TransportSummary {
+  localTransit: string;
+  airportTransfer: string;
+  walkability: string;
 }
 
 export interface TravelPlan {
@@ -84,9 +101,22 @@ export interface TravelPlan {
   packingSuggestions: string[];
   warnings: string[];
   alternativeDestinations: AlternativeDestination[];
+  weatherSummary: WeatherSummary;
+  transportSummary: TransportSummary;
+  travelTips: string[];
+  tripScore: number;
   toolInsights: ToolInsights;
 }
 
 export interface PlanApiResponse {
-  plan: TravelPlan;
+  plan?: TravelPlan;
+  error?: string;
+  code?:
+    | "BAD_REQUEST"
+    | "INVALID_JSON"
+    | "MISSING_API_KEY"
+    | "TIMEOUT"
+    | "RATE_LIMIT"
+    | "UPSTREAM_ERROR"
+    | "UNKNOWN_ERROR";
 }

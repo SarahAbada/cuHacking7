@@ -4,19 +4,21 @@ import {
   Type,
   type FunctionDeclaration,
 } from "@google/genai";
+import { parseTravelPlanFromText } from "@/lib/planValidation";
 import { LOCAL_LENS_SYSTEM_PROMPT } from "@/lib/prompts";
 import type { PlanRequestBody, TravelPlan } from "@/types/travel";
 import {
   searchActivities,
   searchFlights,
   searchHotels,
+  searchTransportation,
   searchWeather,
 } from "@/services/mockTools";
 
 const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: "searchFlights",
-    description: "Find flight options for a destination and season",
+    description: "Find realistic flight options including duration and stops",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -41,7 +43,7 @@ const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: "searchActivities",
-    description: "Find local activity ideas aligned with preferences",
+    description: "Find local activity ideas aligned with preferences and season",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -53,7 +55,7 @@ const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: "searchWeather",
-    description: "Find seasonal weather for a destination",
+    description: "Find destination weather and seasonal conditions",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -63,19 +65,34 @@ const TOOL_DECLARATIONS: FunctionDeclaration[] = [
       required: ["query"],
     },
   },
+  {
+    name: "searchTransportation",
+    description: "Find local transport quality and airport transfer details",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
-function normalizePlan(plan: TravelPlan): TravelPlan {
-  return {
-    ...plan,
-    activities: plan.activities.map((activity) => ({
-      ...activity,
-      crowdLevel:
-        activity.crowdLevel === "high" || activity.crowdLevel === "medium"
-          ? activity.crowdLevel
-          : "low",
-    })),
-  };
+type PlannerErrorCode =
+  | "MISSING_API_KEY"
+  | "TIMEOUT"
+  | "RATE_LIMIT"
+  | "INVALID_JSON"
+  | "UPSTREAM_ERROR"
+  | "UNKNOWN_ERROR";
+
+export class PlannerError extends Error {
+  code: PlannerErrorCode;
+
+  constructor(code: PlannerErrorCode, message: string) {
+    super(message);
+    this.code = code;
+  }
 }
 
 function buildFallbackPlan(prompt: string, origin: string): TravelPlan {
@@ -88,61 +105,62 @@ function buildFallbackPlan(prompt: string, origin: string): TravelPlan {
       heroImagePlaceholder: "Golden cliffs over the Atlantic at sunrise",
       bestTimeToVisit: "November to early December",
     },
-    tripSummary: `A 6-day shoulder-season trip optimized for hiking, warm weather, and low-crowd local experiences. Request: ${prompt}`,
+    tripSummary: `A 6-day shoulder-season trip optimized for hiking, warm weather, and local experiences. Request: ${prompt}`,
     reasoning: {
       whyThisDestination: [
-        "Warm November climate with reliable hiking conditions",
-        "Lower crowd density than nearby Mediterranean city breaks",
-        "Good value on flights and family-run stays for mid-range budgets",
+        "Warm shoulder-season weather supports outdoor plans",
+        "Generally lower crowd pressure than classic city-break destinations",
+        "Balanced cost profile between flights, stays, and activities",
       ],
       localPerspective:
-        "Base in Funchal but spend most days in villages and levada trails where residents actually spend weekends.",
+        "Stay in Funchal for convenience, but spend most days in smaller towns and levada routes where local weekend life happens.",
       tradeoffs: [
-        "Mountain weather can shift quickly; build in backup plans",
-        "Public transport works but renting a small car improves flexibility",
+        "Mountain weather can shift quickly, so backup indoor options are needed",
+        "Transit is workable but a small rental car gives better schedule control",
       ],
-      logistics:
-        `Origin assumed as ${origin}. Best access is a one-stop route via Lisbon with morning arrivals to maximize day one.`,
+      logistics: `Origin assumed as ${origin}. One-stop routes through Lisbon typically provide the best arrival times.`,
+      comparisonSet: ["Valencia: cheaper flights but busier center", "Lisbon: easier transit but denser tourism"],
+      clarifyingQuestions: ["Do you prefer renting a car or relying on public transit?"],
     },
     budget: {
       currency: "USD",
-      totalEstimate: 1180,
+      totalEstimate: 1260,
       breakdown: {
-        flights: 480,
-        accommodation: 320,
+        flights: 540,
+        accommodation: 360,
         food: 180,
         activities: 90,
-        localTransport: 70,
-        buffer: 40,
+        localTransport: 60,
+        buffer: 30,
       },
       notes: [
-        "Book flights 6-8 weeks ahead for lowest fares",
-        "Choose guesthouses outside the old port core for better value",
+        "Book flights 6-8 weeks ahead for lower shoulder-season fares",
+        "Guesthouses outside the old port core often reduce nightly rate by 10-20%",
       ],
     },
     dailyItinerary: [
       {
         day: 1,
-        theme: "Settle into local rhythm",
-        morning: "Arrive and check into a guesthouse in Santa Maria district",
-        afternoon: "Walk Mercado dos Lavradores and local produce lanes",
-        evening: "Casual espada dinner at a neighborhood tasca",
+        theme: "Arrival and orientation",
+        morning: "Arrive and transfer to a guesthouse in Funchal.",
+        afternoon: "Walk old town produce streets and waterfront viewpoints.",
+        evening: "Early local seafood dinner and rest.",
         estimatedCost: 95,
       },
       {
         day: 2,
-        theme: "Clifftop hiking",
-        morning: "Early PR8 Vereda da Ponta de São Lourenço hike",
-        afternoon: "Picnic with bakery items from Caniçal",
-        evening: "Sunset miradouro and low-key wine bar",
+        theme: "Coastal hiking day",
+        morning: "Sunrise hike at Ponta de São Lourenço.",
+        afternoon: "Village lunch in Caniçal and local bakery stop.",
+        evening: "Miradouro sunset and relaxed bar.",
         estimatedCost: 70,
       },
       {
         day: 3,
-        theme: "Levada day",
-        morning: "Levada das 25 Fontes trail before tour buses",
-        afternoon: "Village lunch in Calheta",
-        evening: "Rest and local poncha tasting",
+        theme: "Levada and market culture",
+        morning: "Levada das 25 Fontes before peak traffic.",
+        afternoon: "Mercado tastings and coffee in a neighborhood square.",
+        evening: "Small-venue poncha tasting.",
         estimatedCost: 85,
       },
     ],
@@ -152,14 +170,14 @@ function buildFallbackPlan(prompt: string, origin: string): TravelPlan {
         neighborhood: "Funchal Old Town",
         cuisine: "Madeiran",
         priceRange: "$$",
-        whyLocalPick: "Family-run, no tourist menu gimmicks, excellent espada and milho frito",
+        whyLocalPick: "Family-run, no tourist menu gimmicks, and consistently local regulars.",
       },
       {
         name: "Venda da Donna Maria",
         neighborhood: "Santo da Serra",
         cuisine: "Portuguese comfort",
         priceRange: "$",
-        whyLocalPick: "Popular with local hikers on weekends",
+        whyLocalPick: "Popular with local hikers on weekends.",
       },
     ],
     activities: [
@@ -168,44 +186,64 @@ function buildFallbackPlan(prompt: string, origin: string): TravelPlan {
         category: "Outdoors",
         estimatedCost: 0,
         crowdLevel: "low",
-        whyItFits: "Open views, warm weather, and fewer midday crowds",
+        whyItFits: "Strong views with lower early-hour foot traffic.",
+        availability: "Open daily, best before 9:00.",
       },
       {
         name: "Mercado produce tasting",
         category: "Food & Culture",
-        estimatedCost: 20,
+        estimatedCost: 22,
         crowdLevel: "medium",
-        whyItFits: "Local produce and snacks in one compact stop",
+        whyItFits: "High local food density in one compact stop.",
+        availability: "Best Tue-Sat mornings.",
       },
     ],
     packingSuggestions: [
       "Light layers for warm afternoons and cooler evenings",
       "Trail shoes with grip for wet stone paths",
-      "Packable rain shell for sudden mountain drizzle",
+      "Packable rain shell for occasional mountain drizzle",
     ],
     warnings: [
-      "Steep roads and curves may be uncomfortable for motion-sensitive travelers",
-      "Some popular levada trails require early starts to avoid congestion",
+      "Steep roads may be uncomfortable for motion-sensitive travelers",
+      "Levada trails can become crowded if starting after 10:00",
     ],
     alternativeDestinations: [
       {
-        name: "Gran Canaria",
+        name: "Valencia",
         country: "Spain",
-        reason: "Warm in November with excellent mountain and coastal trails",
-        estimatedBudget: 1240,
+        reason: "Cheaper flights and excellent urban walkability with milder weather.",
+        estimatedBudget: 1170,
       },
       {
-        name: "Oman (Muscat + Jebel Akhdar)",
-        country: "Oman",
-        reason: "Warm shoulder season, dramatic hikes, and lower crowd levels",
-        estimatedBudget: 1390,
+        name: "Lisbon",
+        country: "Portugal",
+        reason: "Easier transit network and strong food scene but busier tourist core.",
+        estimatedBudget: 1230,
       },
     ],
+    weatherSummary: {
+      outlook: "Warm with occasional short showers.",
+      averageHighC: 24,
+      averageLowC: 18,
+      precipitationRisk: "Low to medium",
+    },
+    transportSummary: {
+      localTransit: "Regional buses are reliable in daytime with limited late-night frequency.",
+      airportTransfer: "Aerobus reaches Funchal in about 45 minutes.",
+      walkability: "Central Funchal is walkable but some uphill segments are steep.",
+    },
+    travelTips: [
+      "Start hikes before 8:30 to avoid both heat and tour-bus waves",
+      "Carry small cash for village cafés and market stalls",
+      "Reserve car rental early if your itinerary includes remote levada access",
+    ],
+    tripScore: 85,
     toolInsights: {
-      flights: "MockSky found fares from Canada between $370-$515 round-trip.",
-      hotels: "MockStay returned 3 guesthouses averaging $88/night.",
-      activities: "MockWander indicates trail-heavy days with low to medium crowds.",
-      weather: "MockMeteo indicates average highs near 26°C with limited rain days.",
+      flights: "Round-trip fares usually cluster around $440-$560 with faster options costing more.",
+      hotels: "Mid-range local stays average around $95-$110 per night.",
+      activities: "Most recommended activities stay in low to medium crowd bands before midday.",
+      weather: "Average highs near 24°C and limited rain days support outdoor plans.",
+      transportation: "Airport buses are predictable; village transit is less frequent at night.",
     },
   };
 }
@@ -233,15 +271,51 @@ async function runTool(name: string, args: Record<string, unknown>) {
   if (name === "searchActivities") {
     return searchActivities({ query, season });
   }
+  if (name === "searchTransportation") {
+    return searchTransportation({ query });
+  }
   return searchWeather({ query, season });
 }
 
-function safeParsePlan(text: string): TravelPlan | null {
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new PlannerError("TIMEOUT", "Planning timed out. Please try a shorter prompt."));
+    }, ms);
+  });
+
   try {
-    return normalizePlan(JSON.parse(text) as TravelPlan);
-  } catch {
-    return null;
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
+}
+
+async function safeToolCall(name: string, args: Record<string, unknown>) {
+  try {
+    return await runTool(name, args);
+  } catch {
+    return { error: `${name} unavailable` };
+  }
+}
+
+function summarizeToolOutputs(toolResults: Record<string, unknown>) {
+  return JSON.stringify(toolResults, null, 2);
+}
+
+function getErrorCodeFromMessage(message: string): PlannerErrorCode {
+  const lowered = message.toLowerCase();
+  if (lowered.includes("429") || lowered.includes("rate")) {
+    return "RATE_LIMIT";
+  }
+  if (lowered.includes("json")) {
+    return "INVALID_JSON";
+  }
+  return "UPSTREAM_ERROR";
 }
 
 export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
@@ -249,70 +323,91 @@ export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
   const normalizedOrigin = origin?.trim() ? origin.trim() : "Canada";
 
   if (!apiKey) {
-    return buildFallbackPlan(prompt, normalizedOrigin);
+    throw new PlannerError("MISSING_API_KEY", "GEMINI_API_KEY is missing. Add it to run live planning.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const toolCallResponse = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: `User request: ${prompt}. Origin: ${normalizedOrigin}. Decide what tools to call before planning.`,
-    config: {
-      tools: [{ functionDeclarations: [...TOOL_DECLARATIONS] }],
-      toolConfig: {
-        functionCallingConfig: {
-          mode: FunctionCallingConfigMode.ANY,
-          allowedFunctionNames: [
-            "searchFlights",
-            "searchHotels",
-            "searchActivities",
-            "searchWeather",
-          ],
+  try {
+    const toolCallResponse = await withTimeout(
+      ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `User request: ${prompt}. Origin: ${normalizedOrigin}. Decide which tools are required before planning.`,
+        config: {
+          tools: [{ functionDeclarations: [...TOOL_DECLARATIONS] }],
+          toolConfig: {
+            functionCallingConfig: {
+              mode: FunctionCallingConfigMode.ANY,
+              allowedFunctionNames: [
+                "searchFlights",
+                "searchHotels",
+                "searchActivities",
+                "searchWeather",
+                "searchTransportation",
+              ],
+            },
+          },
         },
-      },
-    },
-  });
+      }),
+      12_000,
+    );
 
-  const functionCalls = toolCallResponse.functionCalls ?? [];
-  const toolResults: Record<string, unknown> = {};
+    const functionCalls = toolCallResponse.functionCalls ?? [];
+    const toolResults: Record<string, unknown> = {};
 
-  for (const call of functionCalls) {
-    const name = call.name ?? "searchWeather";
-    const args = (call.args ?? {}) as Record<string, unknown>;
-    toolResults[name] = await runTool(name, args);
-  }
+    for (const call of functionCalls) {
+      const name = call.name ?? "searchWeather";
+      const args = (call.args ?? {}) as Record<string, unknown>;
+      toolResults[name] = await safeToolCall(name, args);
+    }
 
-  if (!toolResults.searchFlights) {
-    toolResults.searchFlights = await searchFlights({
-      query: prompt,
-      origin: normalizedOrigin,
-    });
-  }
-  if (!toolResults.searchHotels) {
-    toolResults.searchHotels = await searchHotels({ query: prompt });
-  }
-  if (!toolResults.searchActivities) {
-    toolResults.searchActivities = await searchActivities({ query: prompt });
-  }
-  if (!toolResults.searchWeather) {
-    toolResults.searchWeather = await searchWeather({ query: prompt });
-  }
+    const defaults: Array<[string, Promise<unknown>]> = [
+      ["searchFlights", safeToolCall("searchFlights", { query: prompt, origin: normalizedOrigin })],
+      ["searchHotels", safeToolCall("searchHotels", { query: prompt })],
+      ["searchActivities", safeToolCall("searchActivities", { query: prompt })],
+      ["searchWeather", safeToolCall("searchWeather", { query: prompt })],
+      ["searchTransportation", safeToolCall("searchTransportation", { query: prompt })],
+    ];
 
-  const planResponse = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [
-      `${LOCAL_LENS_SYSTEM_PROMPT}`,
-      `User prompt: ${prompt}`,
-      `Travel origin: ${normalizedOrigin}`,
-      `Tool outputs (JSON): ${JSON.stringify(toolResults)}`,
-      "Generate the final strict JSON response now.",
-    ].join("\n\n"),
-    config: {
-      responseMimeType: "application/json",
-      temperature: 0.5,
-    },
-  });
+    for (const [name, loader] of defaults) {
+      if (!toolResults[name]) {
+        toolResults[name] = await loader;
+      }
+    }
 
-  const parsed = safeParsePlan(planResponse.text ?? "");
-  return parsed ?? buildFallbackPlan(prompt, normalizedOrigin);
+    const planResponse = await withTimeout(
+      ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          `${LOCAL_LENS_SYSTEM_PROMPT}`,
+          `User prompt: ${prompt}`,
+          `Travel origin: ${normalizedOrigin}`,
+          `Tool outputs (JSON):\n${summarizeToolOutputs(toolResults)}`,
+          "Use tool numbers in reasoning and toolInsights. Return strict JSON only.",
+        ].join("\n\n"),
+        config: {
+          responseMimeType: "application/json",
+          temperature: 0.45,
+        },
+      }),
+      15_000,
+    );
+
+    const parsed = parseTravelPlanFromText(planResponse.text ?? "");
+    if (!parsed) {
+      throw new PlannerError("INVALID_JSON", "Model returned malformed planning JSON.");
+    }
+
+    return parsed;
+  } catch (error) {
+    if (error instanceof PlannerError) {
+      if (error.code === "INVALID_JSON") {
+        return buildFallbackPlan(prompt, normalizedOrigin);
+      }
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : "Unknown upstream failure";
+    throw new PlannerError(getErrorCodeFromMessage(message), `Planning service failed: ${message}`);
+  }
 }
