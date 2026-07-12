@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7fb;
+  --foreground: #0f172a;
+}
+
+body {
+  background: radial-gradient(circle at top, #ffffff 0%, var(--background) 55%);
+  color: var(--foreground);
+  font-family: "SF Pro Text", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
