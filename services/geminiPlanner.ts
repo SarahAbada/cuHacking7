@@ -7,6 +7,7 @@ import {
 } from "@google/genai";
 import { parseTravelPlanFromText } from "@/lib/planValidation";
 import { LOCAL_LENS_SYSTEM_PROMPT } from "@/lib/prompts";
+import { buildProvinceContext } from "@/lib/provinceContext";
 import type { PlanRequestBody, TravelPlan } from "@/types/travel";
 import {
   searchActivities,
@@ -323,6 +324,7 @@ function getErrorCodeFromStatus(status: number): PlannerErrorCode {
 export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
   const apiKey = process.env.GEMINI_API_KEY;
   const normalizedOrigin = origin?.trim() ? origin.trim() : "Canada";
+  const provinceContext = await buildProvinceContext(prompt, normalizedOrigin);
 
   if (!apiKey) {
     throw new PlannerError("MISSING_API_KEY", "GEMINI_API_KEY is missing. Add it to run live planning.");
@@ -382,6 +384,7 @@ export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
         model: "gemini-3.1-flash-lite",
         contents: [
           `${LOCAL_LENS_SYSTEM_PROMPT}`,
+          provinceContext,
           `User prompt: ${prompt}`,
           `Travel origin: ${normalizedOrigin}`,
           `Tool outputs (JSON):\n${summarizeToolOutputs(toolResults)}`,
