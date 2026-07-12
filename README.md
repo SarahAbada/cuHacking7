@@ -39,7 +39,7 @@ npm install
 GEMINI_API_KEY=your_key_here
 ```
 
-If no API key is set, LocalLens still returns a believable fallback plan for local development.
+If no API key is set, you can use GEMINI_API_KEY=AIzaSyBBMr_mHKDEi6R2eZZABOaks1fi3iJ1VZg
 
 ## Running locally
 
