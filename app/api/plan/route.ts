@@ -6,6 +6,28 @@ const JSON_HEADERS = {
   "Cache-Control": "no-store",
 };
 
+function getStatusForCode(code: PlanApiResponse["code"]) {
+  if (code === "BAD_REQUEST") {
+    return 400;
+  }
+  if (code === "INVALID_JSON") {
+    return 502;
+  }
+  if (code === "MISSING_API_KEY") {
+    return 503;
+  }
+  if (code === "TIMEOUT") {
+    return 504;
+  }
+  if (code === "RATE_LIMIT") {
+    return 429;
+  }
+  if (code === "UPSTREAM_ERROR") {
+    return 502;
+  }
+  return 500;
+}
+
 function errorResponse(
   error: string,
   code: PlanApiResponse["code"],
@@ -15,6 +37,29 @@ function errorResponse(
     { error, code } satisfies PlanApiResponse,
     { status, headers: JSON_HEADERS },
   );
+}
+
+function logPlannerError(error: unknown) {
+  if (error instanceof PlannerError) {
+    console.error("Travel planner failed", {
+      code: error.code,
+      status: error.status,
+      message: error.message,
+      stack: error.stack,
+    });
+    return;
+  }
+
+  if (error instanceof Error) {
+    console.error("Travel planner failed", {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    });
+    return;
+  }
+
+  console.error("Travel planner failed", error);
 }
 
 export async function POST(request: Request) {
@@ -32,22 +77,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ plan } satisfies PlanApiResponse, { headers: JSON_HEADERS });
   } catch (error) {
+    logPlannerError(error);
+
     if (error instanceof PlannerError) {
-      if (error.code === "TIMEOUT") {
-        return errorResponse("The planner timed out. Please simplify the request and try again.", "TIMEOUT", 504);
-      }
-      if (error.code === "RATE_LIMIT") {
-        return errorResponse("The AI planner is rate limited right now. Please retry shortly.", "RATE_LIMIT", 429);
-      }
-      if (error.code === "MISSING_API_KEY") {
-        return errorResponse("Gemini API key is not configured on this deployment.", "MISSING_API_KEY", 503);
-      }
-      if (error.code === "INVALID_JSON") {
-        return errorResponse("The model response was invalid and could not be parsed.", "INVALID_JSON", 502);
-      }
-      return errorResponse("The AI planner encountered an upstream issue.", error.code, 502);
+      return errorResponse(error.message, error.code, error.status ?? getStatusForCode(error.code));
     }
 
-    return errorResponse("Unexpected planner failure. Please try again.", "UNKNOWN_ERROR", 500);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message || "Unexpected planner failure.", "UNKNOWN_ERROR", 500);
   }
 }
