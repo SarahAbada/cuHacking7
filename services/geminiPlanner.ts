@@ -1,4 +1,5 @@
 import {
+  ApiError,
   FunctionCallingConfigMode,
   GoogleGenAI,
   Type,
@@ -88,10 +89,12 @@ type PlannerErrorCode =
 
 export class PlannerError extends Error {
   code: PlannerErrorCode;
+  status?: number;
 
-  constructor(code: PlannerErrorCode, message: string) {
+  constructor(code: PlannerErrorCode, message: string, status?: number) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -307,13 +310,12 @@ function summarizeToolOutputs(toolResults: Record<string, unknown>) {
   return JSON.stringify(toolResults, null, 2);
 }
 
-function getErrorCodeFromMessage(message: string): PlannerErrorCode {
-  const lowered = message.toLowerCase();
-  if (lowered.includes("429") || lowered.includes("rate")) {
+function getErrorCodeFromStatus(status: number): PlannerErrorCode {
+  if (status === 429) {
     return "RATE_LIMIT";
   }
-  if (lowered.includes("json")) {
-    return "INVALID_JSON";
+  if (status === 408 || status === 504) {
+    return "TIMEOUT";
   }
   return "UPSTREAM_ERROR";
 }
@@ -331,7 +333,7 @@ export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
   try {
     const toolCallResponse = await withTimeout(
       ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: `User request: ${prompt}. Origin: ${normalizedOrigin}. Decide which tools are required before planning.`,
         config: {
           tools: [{ functionDeclarations: [...TOOL_DECLARATIONS] }],
@@ -377,7 +379,7 @@ export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
 
     const planResponse = await withTimeout(
       ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: [
           `${LOCAL_LENS_SYSTEM_PROMPT}`,
           `User prompt: ${prompt}`,
@@ -407,7 +409,11 @@ export async function createTravelPlan({ prompt, origin }: PlanRequestBody) {
       throw error;
     }
 
-    const message = error instanceof Error ? error.message : "Unknown upstream failure";
-    throw new PlannerError(getErrorCodeFromMessage(message), `Planning service failed: ${message}`);
+    if (error instanceof ApiError) {
+      throw new PlannerError(getErrorCodeFromStatus(error.status), error.message, error.status);
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new PlannerError("UPSTREAM_ERROR", `Planning service failed: ${message}`);
   }
 }
